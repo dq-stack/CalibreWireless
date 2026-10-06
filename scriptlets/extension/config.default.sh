@@ -10,7 +10,7 @@ NAME="Kindle"
 PASSWORD=""
 
 # calibre's address, used only when the automatic search finds nothing
-# (e.g. a network that blocks broadcasts). Example: HOST="192.168.1.3"
+# (e.g. a network that blocks broadcasts). Example: HOST="192.168.1.20"
 HOST=""
 PORT=9090
 

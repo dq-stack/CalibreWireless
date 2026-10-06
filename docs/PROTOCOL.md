@@ -1,7 +1,7 @@
 # Protocol notes
 
 What the client has to speak, and how it fits into the stock Kindle. Sources are listed per
-section. **Bold "VERIFY"** marks anything not yet confirmed on a real device.
+section. Device facts were confirmed on a Kindle Paperwhite 2 (FW 5.12.2.2) unless noted.
 
 Sources read (October 2026):
 - calibre `src/calibre/devices/smart_device_app/driver.py` (calibre 9.x, GPLv3)
@@ -9,7 +9,7 @@ Sources read (October 2026):
 - KOReader `plugins/calibre.koplugin/wireless.lua`, `metadata.lua` (AGPL-3.0; read as reference only, no code copied)
 - sandman7920/ccsync `kindle/commander.go`, `kindle/entries.go` (MIT)
 - InkSights `collect.py` (our own; cc.db progress query)
-- Dan's Kindle over USB (PW2, FW 5.12.2.2), read-only
+- A Kindle Paperwhite 2 on FW 5.12.2.2 (the test device), inspected over USB and with read-only probes (`tools/probe/`)
 
 ## 1. Discovery (UDP)
 
@@ -103,7 +103,7 @@ calibre keeps a 5-failed-attempts-per-IP lockout, so don't hammer reconnects.
 
 ## 4. Storage layout: share calibre's USB files
 
-Confirmed on Dan's Kindle: calibre's USB driver writes `/mnt/us/metadata.calibre` (JSON list,
+Confirmed on the test Kindle: calibre's USB driver writes `/mnt/us/metadata.calibre` (JSON list,
 40 books, lpaths like `documents/Author/Title.azw3`) and `/mnt/us/driveinfo.calibre`.
 **Design decision:** the client's root is `/mnt/us` and it reads and writes those same two
 files. Books sent over USB and over Wi-Fi are then one list, and calibre recognises USB-sent
@@ -134,8 +134,9 @@ client → `OK {count, willStream: true, willScan: true}` then `count` × `OK {.
 A book we send without calibre's metadata (a file found on disk that isn't in
 metadata.calibre) must carry `_new_book_: true`; calibre will then download the file with
 GET_BOOK_FILE_SEGMENT to read its metadata. Avoid this for big libraries; only do it for
-files under `documents/` with a calibre-supported extension (**decide**: maybe skip
-non-calibre books entirely).
+files under `documents/` with a calibre-supported extension. **This client doesn't**: it
+only reports books listed in metadata.calibre, so books put on the Kindle another way are
+invisible to calibre and never pulled over Wi-Fi.
 
 ## 6. Receiving a book (SEND_BOOK)
 
@@ -157,8 +158,8 @@ calibre → `{lpaths: [...]}`. Reply `OK {}` once, then for each lpath delete th
 sidecars, and reply `OK {uuid}` per lpath (calibre reads one reply per path).
 Sidecars to delete (same as the USB driver's DELETE_EXTS): `.mbp .tan .pdr .ea .apnx .phl`,
 the `<name>.sdr/` folder, and the thumbnail in `system/thumbnails/` + `amazon-cover-bug/`.
-**Decide:** deleting `.sdr` loses reading position and InkSights timing data. calibre's USB
-driver does delete `.sdr`; InkSights' backups cover it. Default = match USB.
+calibre's newer USB driver (KINDLE2) also deletes `.mbp1 .mbs .sdr .han`; this client
+matches it. Deleting `.sdr` removes the book's reading position and notes, as over USB.
 
 ## 8. Keep-alive and disconnect
 
@@ -189,10 +190,10 @@ configured. `_sync_type_ = 3` means "metadata invented by the device", don't use
 Kindle side (cc.db, `/var/local/cc.db`, table `Entries`, `p_type='Entry:Item'`):
 - `p_location` = full path (`/mnt/us/documents/...`), join key with lpath.
 - `p_percentFinished` = real progress (InkSights finding: use this, not timer.model).
-- `p_lastAccess` = last opened (epoch seconds) → `_last_read_date_` (ISO 8601 UTC).
-- read state: FW 5.12 `p_readState` = 1 after "Mark as Read" (confirmed 6 Oct; empty = unread).
-  **VERIFY** the meaning (mark a book "as read" on the Kindle, re-probe). Fallback:
-  `_is_read_ = percentFinished >= threshold` (config, default 98).
+- `p_lastAccess` = last opened (epoch seconds) → `_last_read_date_` (ISO 8601 UTC). Only
+  used when `p_percentFinished` is not NULL: never-opened books carry their sideload time.
+- read state: FW 5.12 `p_readState` = 1 after "Mark as Read" (confirmed; empty = unread).
+  Optionally also `percentFinished >= READ_PERCENT`.
 - Open read-only (`file:/var/local/cc.db?mode=ro`); the framework writes it constantly.
   The probe's `.tables` hit "database is locked" while the PRAGMA worked, so set a busy
   timeout and retry reads.
@@ -202,13 +203,13 @@ Kindle side (cc.db, `/var/local/cc.db`, table `Entries`, `p_type='Entry:Item'`):
 From calibre's USB Kindle driver:
 - Thumbnail path: `/mnt/us/system/thumbnails/thumbnail_<cdeKey>_<cdeType>_portrait.jpg`.
   cdeKey = MOBI EXTH 113, cdeType = EXTH 501 (KFX: book key from the container).
-  For calibre-made books the cdeKey is calibre's book UUID (seen on Dan's Kindle), but read
+  For calibre-made books the cdeKey is calibre's book UUID (seen on the test Kindle), but read
   EXTH anyway (Send-to-Kindle PDOC books and `mobi-asin` identifiers differ).
 - Image: `metadata.thumbnail` = `[width, height, base64 JPEG]`, height = our coverHeight (500).
 - **Amazon cover bug** (MobileRead t=329945): when online, the Kindle may replace sideloaded
   covers. calibre's workaround, which we copy exactly: also save each thumbnail to
   `/mnt/us/amazon-cover-bug/`, and on every connect copy back any thumbnail whose size differs
-  or is missing. Dan's Kindle already has this folder (44 files) from USB use. The client does
+  or is missing. The client does
   the restore on connect **and on disconnect** (Wi-Fi was on the whole time).
   The jailbreak does not include any protection against this.
 - APNX (stretch): FW 5.12 only reads it inside `<book>.sdr/`. calibre's USB driver detects
@@ -216,7 +217,7 @@ From calibre's USB Kindle driver:
 
 ## 11. Collections (content catalog), NOT IMPLEMENTED
 
-Collections were dropped from this project (Dan's call, 6 Oct). Notes for anyone who wants
+Collections are out of scope for v1. Notes for anyone who wants
 to add them:
 - Build them from metadata.calibre yourself (series/tags per book), as ccsync does.
   calibre's own `collections` in SEND_BOOKLISTS depends on its "metadata management"
@@ -242,7 +243,7 @@ From ccsync (MIT):
 - New books aren't in cc.db until the Kindle indexes them: after a transfer, poll cc.db for the
   new `p_location`s (e.g. every 2 s, up to 60 s) before sending the change request.
 - Probe (FW 5.12.2.2): 127.0.0.1:9101 is listening, `/tmp/session_token` exists, Entries has
-  `p_collectionCount`, 0 collections today. **VERIFY** ccsync's command format is accepted.
+  `p_collectionCount`, 0 collections today. ccsync's command format was accepted for a thumbnail update (untested for collections).
 
 ## 12. Kindle platform notes (from CoverSleep / InkSights)
 
@@ -255,15 +256,16 @@ From ccsync (MIT):
   (always, via trap).
 - Wi-Fi: `com.lab126.cmd wirelessEnable` = 0 in airplane mode, `com.lab126.wifid cmState` = NA,
   and wlan0 doesn't exist while off. Turn on with `lipc-set-prop com.lab126.cmd wirelessEnable 1`,
-  wait for cmState `CONNECTED` (**VERIFY**), and restore the previous state on exit.
+  wait for cmState `CONNECTED` (confirmed), and restore the previous state on exit.
 - Firewall: INPUT policy DROP; UDP is accepted only for ESTABLISHED. The discovery reply
   comes from calibre's unicast IP to a datagram we sent to 255.255.255.255, so conntrack
   probably won't match it and the reply is **dropped**. Options: a temporary
   `iptables -I INPUT -p udp --sport <calibre port> -j ACCEPT` for the 5 ports, removed on exit
-  (needs Dan's OK), or a fixed calibre address in the config. TCP to calibre is outbound, so
+  or a fixed calibre address in the config. **Chosen:** the temporary rule on dport 8134 (KOReader's rule), with `HOST` as a fallback. TCP to calibre is outbound, so
   it's fine.
 - OTA: no update files in /mnt/us (probe).
-- Status on screen: FBInk (`/mnt/us/extensions/custom-screensaver/bin/fbink` exists on Dan's
-  Kindle; we should ship our own copy, or fall back to `eips`).
-- Clock: Dan's Kindle now has its time set; other users' may show UTC. `_last_read_date_` is
+- Status on screen: an installed FBInk if found (CoverSleep, KUAL, MRInstaller, usbnet
+  paths), otherwise `eips` (wrapped to 3 rows of 44 characters from row 36). FBInk only
+  publishes source, so it isn't bundled.
+- Clock: a Kindle whose time was never set may show UTC. `_last_read_date_` is
   sent as UTC, so this only matters for display.

@@ -3,8 +3,8 @@ package discover
 import "testing"
 
 func TestParseReply(t *testing.T) {
-	host, port, err := ParseReply("calibre wireless device client (on Daniels-MacBook-Air);8080,9090")
-	if err != nil || host != "Daniels-MacBook-Air" || port != 9090 {
+	host, port, err := ParseReply("calibre wireless device client (on My-MacBook-Air);8080,9090")
+	if err != nil || host != "My-MacBook-Air" || port != 9090 {
 		t.Fatalf("got %q %d %v", host, port, err)
 	}
 	// No content server running: the first number is empty.

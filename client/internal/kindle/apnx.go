@@ -18,7 +18,7 @@ import (
 const charsPerPage = 2300
 
 // APNXPath is where FW 5.x reads page numbers for a book: inside the book's
-// .sdr folder, not beside the book (confirmed on Dan's PW2, FW 5.12).
+// .sdr folder, not beside the book (confirmed on a PW2, FW 5.12).
 func APNXPath(bookFile string) string {
 	base := strings.TrimSuffix(filepath.Base(bookFile), filepath.Ext(bookFile))
 	return filepath.Join(filepath.Dir(bookFile), base+".sdr", base+".apnx")
