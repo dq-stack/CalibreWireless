@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go 1.23 on purpose: 1.24+ needs Linux kernel 3.2, and the Paperwhite 2
+      # (and other older Kindles) run 3.0.x.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: client/go.sum
+
+      - name: Vet and test
+        working-directory: client
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: Shell syntax
+        run: |
+          for f in scriptlets/extension/run.sh scriptlets/extension/config.default.sh "scriptlets/Calibre Wireless.sh"; do
+            sh -n "$f"
+          done
+
+      - name: Package
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME#v}"; else V="0.0.0-${GITHUB_SHA::7}"; fi
+          tools/package.sh "$V"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: calibre-wireless
+          path: release/*.zip
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES=".github/release-notes/${GITHUB_REF_NAME}.md"
+          [ -f "$NOTES" ] || NOTES=/dev/null
+          gh release create "${GITHUB_REF_NAME}" release/*.zip --title "${GITHUB_REF_NAME}" --notes-file "$NOTES"

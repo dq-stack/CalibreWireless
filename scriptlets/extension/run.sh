@@ -19,6 +19,9 @@ READ_DATE_COL=""
 READ_PERCENT=0
 IDLE="30m"
 STATUS_WITH=""
+# config.sh is the user's copy; it's created from config.default.sh on first
+# run so that unzipping an upgrade never overwrites settings.
+[ -f "$APP/config.sh" ] || cp "$APP/config.default.sh" "$APP/config.sh" 2>/dev/null
 [ -f "$APP/config.sh" ] && . "$APP/config.sh"
 
 log() { echo "$(date '+%Y/%m/%d %H:%M:%S') run: $*" >> "$LOG"; }

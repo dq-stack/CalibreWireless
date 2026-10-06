@@ -10,7 +10,7 @@ APP="$KINDLE/extensions/calibre-wireless"
 mkdir -p "$APP/bin"
 cp build/kcw-armv7 "$APP/bin/kcw"
 cp scriptlets/extension/run.sh "$APP/"
-[ -f "$APP/config.sh" ] || cp scriptlets/extension/config.sh "$APP/"   # keep user settings
+cp scriptlets/extension/config.default.sh "$APP/"   # config.sh (user settings) is left alone
 [ -f scriptlets/extension/icon.png ] && cp scriptlets/extension/icon.png "$APP/"
 cp "scriptlets/Calibre Wireless.sh" "$KINDLE/documents/"
 dot_clean -m "$KINDLE" 2>/dev/null || true

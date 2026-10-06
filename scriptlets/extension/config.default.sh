@@ -1,4 +1,5 @@
-# Calibre Wireless settings. Edit over USB; changes apply on the next tap.
+# Calibre Wireless settings. Edit config.sh (made from config.default.sh on the
+# first run) over USB; changes apply on the next tap. Upgrades never touch it.
 # Lines starting with # are ignored. Keep the quotes.
 
 # Name calibre shows for this Kindle.
