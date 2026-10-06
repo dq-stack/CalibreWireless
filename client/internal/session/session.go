@@ -36,8 +36,11 @@ type Config struct {
 // Hooks lets the Kindle-specific parts (covers, sidecars, collections, read
 // status) plug in without the protocol code knowing about them.
 type Hooks struct {
-	// BookReceived runs after a book file is written and recorded.
-	BookReceived func(abs string, b library.Book)
+	// BookReady runs on the fully written temp file just before it is moved
+	// into documents/, so a cover can be in place before the Kindle sees it.
+	BookReady func(tmp string, b library.Book)
+	// BookDeleting runs just before a book file is removed.
+	BookDeleting func(abs string, b library.Book)
 	// BookDeleted runs after a book file is removed.
 	BookDeleted func(abs string, b library.Book)
 	// ReadState fills _is_read_ / _last_read_date_ for one book; nil = no sync.
@@ -349,24 +352,25 @@ func (s *Session) sendBook(raw json.RawMessage) error {
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil {
-		err = os.Rename(tmp, abs)
-	}
 	if err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("receiving %s: %w", lpath, err)
 	}
 	meta["lpath"] = lpath
 	meta["size"] = a.Length
+	if s.hooks.BookReady != nil {
+		s.hooks.BookReady(tmp, meta)
+	}
+	if err := os.Rename(tmp, abs); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("receiving %s: %w", lpath, err)
+	}
 	s.lib.Put(meta)
 	if err := s.lib.Save(); err != nil {
 		log.Printf("saving book list: %v", err)
 	}
 	s.received++
 	log.Printf("received %s (%d bytes)", lpath, a.Length)
-	if s.hooks.BookReceived != nil {
-		s.hooks.BookReceived(abs, meta)
-	}
 	if a.ThisBook+1 == a.TotalBooks {
 		s.hooks.Status(fmt.Sprintf("Received %d book(s)", a.TotalBooks))
 	}
@@ -424,6 +428,9 @@ func (s *Session) deleteBooks(raw json.RawMessage) error {
 			abs := s.lib.Abs(lp)
 			if b := s.lib.Get(lp); b != nil {
 				uuid = b.Str("uuid")
+				if s.hooks.BookDeleting != nil {
+					s.hooks.BookDeleting(abs, b)
+				}
 				if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
 					log.Printf("deleting %s: %v", lp, err)
 				}

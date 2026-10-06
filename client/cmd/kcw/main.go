@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/discover"
+	"github.com/dq-stack/kindle-calibre-wireless/client/internal/kindle"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/library"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/proto"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/session"
@@ -131,6 +132,9 @@ func run(o options, cfg session.Config) error {
 		return err
 	}
 	log.Printf("%d books in %s", len(lib.Books), library.MetadataFile)
+	covers := kindle.Covers{Root: o.root}
+	fixCovers(covers, lib, "connect")
+	defer fixCovers(covers, lib, "disconnect")
 
 	nc, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
@@ -147,7 +151,24 @@ func run(o options, cfg session.Config) error {
 		conn.Close()
 	}()
 
-	s := session.New(conn, lib, cfg, session.Hooks{Status: status})
+	s := session.New(conn, lib, cfg, session.Hooks{
+		Status: status,
+		BookReady: func(tmp string, b library.Book) {
+			if name, err := covers.Write(tmp, b["thumbnail"]); err != nil {
+				log.Printf("cover for %s: %v", b.LPath(), err)
+			} else {
+				log.Printf("cover written: %s", name)
+			}
+		},
+		BookDeleting: func(abs string, b library.Book) {
+			if err := covers.Remove(abs); err != nil {
+				log.Printf("removing cover for %s: %v", b.LPath(), err)
+			}
+		},
+		BookDeleted: func(abs string, b library.Book) {
+			kindle.RemoveSidecars(abs)
+		},
+	})
 	err = s.Run()
 	switch {
 	case errors.Is(err, session.ErrEjected):
@@ -159,6 +180,36 @@ func run(o options, cfg session.Config) error {
 	}
 	status("Connection lost")
 	return err
+}
+
+// fixCovers puts back covers the Kindle replaced (the Amazon cover bug) and
+// writes covers for calibre books that have none yet.
+func fixCovers(c kindle.Covers, lib *library.Library, when string) {
+	restored, err := c.Restore()
+	if err != nil {
+		log.Printf("cover restore (%s): %v", when, err)
+	}
+	for _, n := range restored {
+		log.Printf("cover restored (%s): %s", when, n)
+	}
+	added := 0
+	for _, b := range lib.Books {
+		if b["thumbnail"] == nil {
+			continue
+		}
+		abs := lib.Abs(b.LPath())
+		missing, err := c.NotCached(abs)
+		if err != nil || !missing {
+			continue
+		}
+		if name, err := c.Write(abs, b["thumbnail"]); err == nil {
+			log.Printf("cover added (%s): %s", when, name)
+			added++
+		}
+	}
+	if len(restored) > 0 || added > 0 {
+		log.Printf("covers (%s): %d restored, %d added", when, len(restored), added)
+	}
 }
 
 // screen is the status display program: an FBInk binary, eips, or "".
