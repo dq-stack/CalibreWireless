@@ -120,13 +120,13 @@ func run(o options, cfg session.Config) error {
 
 	nc, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		status("Can't connect to calibre")
+		status("Can't connect to calibre at " + addr)
 		return err
 	}
 	conn := proto.New(nc)
 	defer conn.Close()
 	log.Printf("connected to %s", addr)
-	status("Connected. Waiting for calibre…")
+	status("Connected to calibre at " + addr)
 	go func() {
 		<-stop
 		stopped.Store(true)
