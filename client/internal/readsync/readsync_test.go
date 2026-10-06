@@ -26,6 +26,10 @@ func TestFromEntry(t *testing.T) {
 	if s := FromEntry(kindle.Entry{PercentFinished: 99}, Rule{Marked: true}); s.Read {
 		t.Fatal("percent rule off but counted as read")
 	}
+	// Marked as read without ever opening it (seen on the device).
+	if s := FromEntry(kindle.Entry{PercentFinished: -1, ReadState: "1", LastAccess: 1791282049}, Rule{Marked: true}); !s.Read || s.LastRead != "" {
+		t.Fatalf("marked read: %+v", s)
+	}
 }
 
 func TestReportKeepsCalibreEdits(t *testing.T) {

@@ -190,7 +190,7 @@ Kindle side (cc.db, `/var/local/cc.db`, table `Entries`, `p_type='Entry:Item'`):
 - `p_location` = full path (`/mnt/us/documents/...`), join key with lpath.
 - `p_percentFinished` = real progress (InkSights finding: use this, not timer.model).
 - `p_lastAccess` = last opened (epoch seconds) → `_last_read_date_` (ISO 8601 UTC).
-- read state: FW 5.12 **has `p_readState`** (probe, 6 Oct). Seen values: empty (NULL) and 1.
+- read state: FW 5.12 `p_readState` = 1 after "Mark as Read" (confirmed 6 Oct; empty = unread).
   **VERIFY** the meaning (mark a book "as read" on the Kindle, re-probe). Fallback:
   `_is_read_ = percentFinished >= threshold` (config, default 98).
 - Open read-only (`file:/var/local/cc.db?mode=ro`); the framework writes it constantly.

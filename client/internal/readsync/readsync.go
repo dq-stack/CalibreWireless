@@ -48,10 +48,10 @@ func FromEntry(e kindle.Entry, r Rule) KindleState {
 	return s
 }
 
-// isMarkedRead interprets p_readState. VERIFY on device: which value means
-// "Mark as Read" on FW 5.12 (probe round 3).
+// isMarkedRead interprets p_readState: "Mark as Read" sets it to 1 (FW 5.12,
+// confirmed on the PW2); unread books have it empty.
 func isMarkedRead(v string) bool {
-	return v == "2"
+	return v == "1"
 }
 
 // Store remembers the Kindle state we last reported, per lpath, in a small
