@@ -1,5 +1,6 @@
 #!/bin/sh
 # Name: Calibre Wireless
+# Icon: /mnt/us/extensions/calibre-wireless/icon.png
 # DontUseFBInk
 #
 # Tap to connect to calibre over Wi-Fi; tap again to disconnect.
