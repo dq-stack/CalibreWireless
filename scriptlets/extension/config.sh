@@ -31,3 +31,7 @@ READ_PERCENT=0
 
 # Disconnect after this long with no transfers (e.g. 15m, 1h).
 IDLE="30m"
+
+# On-screen messages use FBInk if one is installed (e.g. by CoverSleep or
+# KUAL), otherwise the Kindle's built-in eips. Set to "eips" to force eips.
+STATUS_WITH=""

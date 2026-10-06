@@ -363,14 +363,51 @@ func status(msg string) {
 	if screen == "" {
 		return
 	}
-	var cmd *exec.Cmd
 	if strings.HasSuffix(screen, "eips") {
-		// eips has no "clear line"; pad so a shorter message hides a longer one.
-		cmd = exec.Command(screen, "0", "38", fmt.Sprintf("%-60.60s", " "+msg))
-	} else {
-		cmd = exec.Command(screen, "-q", "-m", "-p", "-y", "-4", msg)
+		// eips prints on a fixed character grid with no "clear line", so wrap
+		// to 3 padded rows; shorter messages blank out longer ones.
+		for i, line := range wrap(msg, eipsCols, 3) {
+			if err := exec.Command(screen, "1", fmt.Sprint(eipsRow+i), fmt.Sprintf("%-*s", eipsCols, line)).Run(); err != nil {
+				log.Printf("status display: %v", err)
+				return
+			}
+		}
+		return
 	}
-	if err := cmd.Run(); err != nil {
+	if err := exec.Command(screen, "-q", "-m", "-p", "-y", "-5", msg).Run(); err != nil {
 		log.Printf("status display: %v", err)
 	}
+}
+
+// eips grid position: the PW2 grid is about 47x42 characters.
+const eipsCols, eipsRow = 44, 36
+
+// wrap splits msg into exactly n lines of at most width runes.
+func wrap(msg string, width, n int) []string {
+	lines := make([]string, 0, n)
+	cur := ""
+	for _, w := range strings.Fields(msg) {
+		switch {
+		case cur == "":
+			cur = w
+		case len([]rune(cur))+1+len([]rune(w)) <= width:
+			cur += " " + w
+		default:
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	lines = append(lines, cur)
+	for i, l := range lines {
+		if r := []rune(l); len(r) > width {
+			lines[i] = string(r[:width])
+		}
+	}
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	for len(lines) < n {
+		lines = append(lines, "")
+	}
+	return lines
 }

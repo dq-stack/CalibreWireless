@@ -18,23 +18,32 @@ READ_COL=""
 READ_DATE_COL=""
 READ_PERCENT=0
 IDLE="30m"
+STATUS_WITH=""
 [ -f "$APP/config.sh" ] && . "$APP/config.sh"
 
 log() { echo "$(date '+%Y/%m/%d %H:%M:%S') run: $*" >> "$LOG"; }
 
-# Status display: our FBInk, CoverSleep's FBInk, or eips.
+# Status display: FBInk if one is installed (it's nicer), else the Kindle's
+# built-in eips. STATUS_WITH="eips" in config.sh forces eips.
 SHOW=""
-if [ -x "$RUN/fbink" ]; then
-    SHOW="$RUN/fbink"
-elif [ -x /mnt/us/extensions/custom-screensaver/bin/fbink ]; then
-    cp /mnt/us/extensions/custom-screensaver/bin/fbink "$RUN/fbink" && SHOW="$RUN/fbink"
+if [ "$STATUS_WITH" != "eips" ]; then
+    for f in "$RUN/fbink" /mnt/us/extensions/custom-screensaver/bin/fbink /mnt/us/libkh/bin/fbink \
+             /mnt/us/extensions/MRInstaller/bin/fbink /usr/bin/fbink /mnt/us/usbnet/bin/fbink; do
+        if [ -x "$f" ]; then
+            [ "$f" = "$RUN/fbink" ] || cp "$f" "$RUN/fbink"
+            SHOW="$RUN/fbink"
+            break
+        fi
+    done
 fi
 [ -z "$SHOW" ] && SHOW="$(command -v eips)"
 show() {
     log "STATUS $1"
     case "$SHOW" in
-        *eips) eips 0 38 "$(printf '%-60.60s' " $1")" >/dev/null 2>&1 ;;
-        ?*) "$SHOW" -q -m -p -y -4 "$1" >/dev/null 2>&1 ;;
+        *eips) eips 1 36 "$(printf '%-44.44s' "$1")" >/dev/null 2>&1
+               eips 1 37 "$(printf '%-44s' '')" >/dev/null 2>&1
+               eips 1 38 "$(printf '%-44s' '')" >/dev/null 2>&1 ;;
+        ?*) "$SHOW" -q -m -p -y -5 "$1" >/dev/null 2>&1 ;;
     esac
 }
 
