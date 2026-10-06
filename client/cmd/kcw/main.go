@@ -11,7 +11,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/discover"
@@ -22,11 +26,18 @@ import (
 
 var version = "0.1.0-dev"
 
+type options struct {
+	root, host, bcast string
+	port, udpPort     int
+}
+
 func main() {
-	root := flag.String("root", "/mnt/us", "storage root holding documents/ and metadata.calibre")
-	host := flag.String("host", "", "calibre address (skips discovery)")
-	port := flag.Int("port", 9090, "calibre port when -host is set")
-	bcast := flag.String("broadcast", "255.255.255.255", "discovery broadcast address")
+	var o options
+	flag.StringVar(&o.root, "root", "/mnt/us", "storage root holding documents/ and metadata.calibre")
+	flag.StringVar(&o.host, "host", "", "calibre address; used when discovery finds nothing")
+	flag.IntVar(&o.port, "port", 9090, "calibre port for -host")
+	flag.StringVar(&o.bcast, "broadcast", "255.255.255.255", "discovery broadcast address")
+	flag.IntVar(&o.udpPort, "udp-port", discover.LocalPort, "local UDP port for discovery (0 = any)")
 	password := flag.String("password", "", "calibre wireless password")
 	name := flag.String("name", "Kindle", "device name shown in calibre")
 	exts := flag.String("formats", "azw3,mobi,azw,kfx,pdf,txt", "accepted formats, preferred first")
@@ -34,6 +45,7 @@ func main() {
 	readDateCol := flag.String("read-date-col", "", "calibre Date column for last read, e.g. #last_read")
 	idle := flag.Duration("idle", 30*time.Minute, "disconnect after this long without transfers")
 	logFile := flag.String("log", "", "append log to this file (default stderr)")
+	statusCmd := flag.String("status", "", "program that shows status messages on screen (fbink or eips)")
 	flag.Parse()
 
 	if *logFile != "" {
@@ -45,9 +57,10 @@ func main() {
 		log.SetOutput(io.MultiWriter(os.Stderr, f))
 	}
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.Printf("kcw %s starting, root %s", version, *root)
+	log.Printf("kcw %s starting, root %s", version, o.root)
+	screen = *statusCmd
 
-	if err := run(*root, *host, *port, *bcast, session.Config{
+	if err := run(o, session.Config{
 		AppName:     "KindleCalibreWireless",
 		Version:     version,
 		DeviceName:  *name,
@@ -64,29 +77,42 @@ func main() {
 	log.Printf("stopped: calibre disconnected")
 }
 
-func run(root, host string, port int, bcast string, cfg session.Config) error {
-	if st, err := os.Stat(root + "/" + library.BooksDir); err != nil || !st.IsDir() {
-		return fmt.Errorf("%s/%s is not a folder", root, library.BooksDir)
-	}
-	addr := net.JoinHostPort(host, fmt.Sprint(port))
-	if host == "" {
-		status("Looking for calibre…")
-		var srv discover.Server
-		var err error
-		for i := 0; i < 5; i++ {
-			if srv, err = discover.Find(bcast, 3*time.Second); err == nil {
-				break
-			}
-		}
-		if err != nil {
-			status("calibre not found. Is the wireless connection started?")
-			return fmt.Errorf("discovery: %w", err)
-		}
-		log.Printf("found calibre on %s", srv)
-		addr = net.JoinHostPort(srv.Addr, fmt.Sprint(srv.Port))
+func run(o options, cfg session.Config) error {
+	if st, err := os.Stat(o.root + "/" + library.BooksDir); err != nil || !st.IsDir() {
+		return fmt.Errorf("%s/%s is not a folder", o.root, library.BooksDir)
 	}
 
-	lib, err := library.Open(root)
+	// SIGTERM/SIGINT (the scriptlet tapped again, USB plugged in) close the
+	// connection; the session then unwinds and removes any half-written book.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	var stopped atomic.Bool
+
+	status("Looking for calibre…")
+	srv, err := discover.Find(o.bcast, o.udpPort, 3*time.Second)
+	for i := 1; err != nil && i < 4; i++ {
+		select {
+		case <-stop:
+			status("Stopped")
+			return errors.New("stopped while looking for calibre")
+		default:
+		}
+		srv, err = discover.Find(o.bcast, o.udpPort, 3*time.Second)
+	}
+	var addr string
+	switch {
+	case err == nil:
+		log.Printf("found calibre on %s", srv)
+		addr = net.JoinHostPort(srv.Addr, fmt.Sprint(srv.Port))
+	case o.host != "":
+		log.Printf("discovery failed (%v), using %s", err, o.host)
+		addr = net.JoinHostPort(o.host, fmt.Sprint(o.port))
+	default:
+		status("calibre not found. In calibre: Connect/share > Start wireless device connection")
+		return fmt.Errorf("discovery: %w", err)
+	}
+
+	lib, err := library.Open(o.root)
 	if err != nil {
 		return err
 	}
@@ -94,23 +120,50 @@ func run(root, host string, port int, bcast string, cfg session.Config) error {
 
 	nc, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
+		status("Can't connect to calibre")
 		return err
 	}
 	conn := proto.New(nc)
 	defer conn.Close()
 	log.Printf("connected to %s", addr)
+	status("Connected. Waiting for calibre…")
+	go func() {
+		<-stop
+		stopped.Store(true)
+		conn.Close()
+	}()
 
 	s := session.New(conn, lib, cfg, session.Hooks{Status: status})
 	err = s.Run()
-	if errors.Is(err, session.ErrEjected) {
+	switch {
+	case errors.Is(err, session.ErrEjected):
 		status(fmt.Sprintf("Disconnected. %d book(s) received", s.Received()))
 		return nil
+	case stopped.Load():
+		status(fmt.Sprintf("Stopped. %d book(s) received", s.Received()))
+		return nil
 	}
+	status("Connection lost")
 	return err
 }
 
-// status shows a message to the user. On the Mac it's just the log; the
-// Kindle launcher reads the log's STATUS lines and draws them with FBInk.
+// screen is the status display program: an FBInk binary, eips, or "".
+var screen string
+
+// status logs a message and draws it near the bottom of the screen.
 func status(msg string) {
 	log.Printf("STATUS %s", msg)
+	if screen == "" {
+		return
+	}
+	var cmd *exec.Cmd
+	if strings.HasSuffix(screen, "eips") {
+		// eips has no "clear line"; pad so a shorter message hides a longer one.
+		cmd = exec.Command(screen, "0", "38", fmt.Sprintf("%-60.60s", " "+msg))
+	} else {
+		cmd = exec.Command(screen, "-q", "-m", "-p", "-y", "-4", msg)
+	}
+	if err := cmd.Run(); err != nil {
+		log.Printf("status display: %v", err)
+	}
 }

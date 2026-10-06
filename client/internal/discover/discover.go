@@ -35,10 +35,15 @@ func ParseReply(msg string) (host string, port int, err error) {
 	return m[1], port, err
 }
 
+// LocalPort is the fixed port we send from, so the Kindle's firewall can let
+// calibre's reply in with a single rule (the same port KOReader uses).
+const LocalPort = 8134
+
 // Find broadcasts to each calibre port in turn and returns the first answer.
 // target is normally "255.255.255.255"; tests can use 127.0.0.1.
-func Find(target string, wait time.Duration) (Server, error) {
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+// localPort 0 picks any free port.
+func Find(target string, localPort int, wait time.Duration) (Server, error) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: localPort})
 	if err != nil {
 		return Server{}, err
 	}
