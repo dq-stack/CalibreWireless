@@ -167,6 +167,12 @@ func TestSendBookAndList(t *testing.T) {
 	if len(lib.Books) != 0 {
 		t.Fatal("book still listed")
 	}
+	if _, err := os.Stat(filepath.Join(lib.Root, "documents/Voss, Chris")); !os.IsNotExist(err) {
+		t.Fatal("empty author folder left behind")
+	}
+	if _, err := os.Stat(filepath.Join(lib.Root, "documents")); err != nil {
+		t.Fatal("documents folder removed")
+	}
 }
 
 func TestRefuseUnsafePath(t *testing.T) {

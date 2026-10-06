@@ -160,6 +160,17 @@ func (l *Library) Prune() (removed int) {
 	return removed
 }
 
+// RemoveEmptyDirs removes dir and its empty parents, stopping at documents/.
+func (l *Library) RemoveEmptyDirs(dir string) {
+	stop := filepath.Join(l.Root, BooksDir)
+	for dir != stop && strings.HasPrefix(dir, stop+string(filepath.Separator)) {
+		if os.Remove(dir) != nil { // fails if not empty
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
 // ErrUnsafePath is returned for lpaths that could escape the storage root.
 var ErrUnsafePath = errors.New("unsafe file name")
 

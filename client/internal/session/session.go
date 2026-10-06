@@ -151,8 +151,12 @@ func (s *Session) handle(op int, raw json.RawMessage) error {
 		}
 		return nil
 	case proto.CalibreBusy:
-		s.hooks.Status("calibre is busy with another device")
-		return errors.New("calibre is busy with another device")
+		var a struct {
+			OtherDevice string `json:"otherDevice"`
+		}
+		json.Unmarshal(raw, &a)
+		s.hooks.Status("calibre is busy with another device: " + a.OtherDevice)
+		return fmt.Errorf("calibre is busy with another device (%s)", a.OtherDevice)
 	default:
 		log.Printf("ignoring opcode %s: %.200s", proto.Name(op), raw)
 		return nil
@@ -424,6 +428,7 @@ func (s *Session) deleteBooks(raw json.RawMessage) error {
 					log.Printf("deleting %s: %v", lp, err)
 				}
 				s.lib.Remove(lp)
+				s.lib.RemoveEmptyDirs(filepath.Dir(abs))
 				if s.hooks.BookDeleted != nil {
 					s.hooks.BookDeleted(abs, b)
 				}
