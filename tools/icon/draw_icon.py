@@ -8,7 +8,7 @@ import sys
 from PIL import Image, ImageDraw
 
 W, H, S = 450, 600, 4          # final size, supersampling factor
-STROKE = 15                     # line width at final size
+STROKE = 11                     # line width at final size
 img = Image.new("L", (W * S, H * S), 255)
 d = ImageDraw.Draw(img)
 r = STROKE * S / 2
