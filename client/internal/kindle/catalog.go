@@ -4,26 +4,19 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-// The Kindle's content catalog: read through cc.db (with the device's own
-// sqlite3, read-only queries only) and changed only through the catalog
-// service on 127.0.0.1:9101, never by writing cc.db. See PROTOCOL.md §9, §11.
+// The Kindle's content catalog, read through cc.db with the device's own
+// sqlite3 (read-only queries only). This app never changes the catalog.
+// See PROTOCOL.md §9.
 
-const (
-	CCDB       = "/var/local/cc.db"
-	catalogURL = "http://127.0.0.1:9101/change"
-	tokenFile  = "/tmp/session_token"
-)
+const CCDB = "/var/local/cc.db"
 
 // Entry is one cc.db Entries row (only the fields we use).
 type Entry struct {
@@ -37,7 +30,7 @@ type Entry struct {
 	ReadState       string
 }
 
-// Catalog talks to cc.db and the catalog service.
+// Catalog reads cc.db.
 type Catalog struct {
 	DB      string // path to cc.db
 	SQLite  string // sqlite3 binary
@@ -117,56 +110,6 @@ func (c *Catalog) Entries(dir string) (map[string]Entry, error) {
 		}
 	}
 	return m, nil
-}
-
-// WaitFor polls until the Kindle has indexed path (new books take a few
-// seconds) or the timeout passes.
-func (c *Catalog) WaitFor(path string, timeout time.Duration) (Entry, error) {
-	deadline := time.Now().Add(timeout)
-	for {
-		rows, err := c.query("SELECT " + entryCols + " FROM Entries WHERE p_type='Entry:Item' AND p_location=" + sqlQuote(path))
-		if err == nil && len(rows) > 0 {
-			if e, ok := parseEntry(rows[0]); ok {
-				return e, nil
-			}
-		}
-		if time.Now().After(deadline) {
-			if err == nil {
-				err = errors.New("not indexed yet")
-			}
-			return Entry{}, fmt.Errorf("waiting for %s: %w", path, err)
-		}
-		time.Sleep(2 * time.Second)
-	}
-}
-
-// Change sends a ChangeRequest to the catalog service (the method ccsync and
-// LibrarianSync use), e.g. {"update": {"type": "Entry:Item", ...}}.
-func (c *Catalog) Change(commands []map[string]any) error {
-	body, err := json.Marshal(map[string]any{"type": "ChangeRequest", "id": 1, "commands": commands})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("POST", catalogURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if tok, err := os.ReadFile(tokenFile); err == nil {
-		// Header name must stay exactly "AuthToken" (Go would canonicalise it).
-		req.Header["AuthToken"] = []string{strings.TrimSpace(string(tok))}
-	}
-	req.Close = true
-	resp, err := (&http.Client{Timeout: c.Timeout}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	reply, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("catalog: HTTP %d: %s", resp.StatusCode, reply)
-	}
-	return nil
 }
 
 // PdocKey is the key the Kindle gives sideloaded personal documents (PDF,

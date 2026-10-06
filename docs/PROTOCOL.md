@@ -214,9 +214,17 @@ From calibre's USB Kindle driver:
 - APNX (stretch): FW 5.12 only reads it inside `<book>.sdr/`. calibre's USB driver detects
   this by looking for `.sdr` folders. Generating APNX on the device is out of scope for now.
 
-## 11. Collections (content catalog)
+## 11. Collections (content catalog), NOT IMPLEMENTED
 
-From ccsync (MIT), for later milestones:
+Collections were dropped from this project (Dan's call, 6 Oct). Notes for anyone who wants
+to add them:
+- Build them from metadata.calibre yourself (series/tags per book), as ccsync does.
+  calibre's own `collections` in SEND_BOOKLISTS depends on its "metadata management"
+  preference and leaves out existing books with the default ("manual").
+- A catalog write we tried for covers (re-sending a book's thumbnail path) made the library
+  stop showing that cover until a restart, so test any catalog change carefully.
+
+From ccsync (MIT):
 - `POST http://127.0.0.1:9101/change`, header `AuthToken: <contents of /tmp/session_token>`
   if that file exists, body:
   `{"type":"ChangeRequest","id":1,"commands":[...]}`.
