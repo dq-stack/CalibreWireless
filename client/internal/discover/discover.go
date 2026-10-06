@@ -1,0 +1,69 @@
+// Package discover finds calibre's wireless device server via its UDP
+// broadcast ports. See docs/PROTOCOL.md §1.
+package discover
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"regexp"
+	"strconv"
+	"time"
+)
+
+// Ports calibre listens on for discovery datagrams.
+var Ports = []int{54982, 48123, 39001, 44044, 59678}
+
+var reply = regexp.MustCompile(`calibre wireless device client \(on (.*)\);(\d*),(\d+)$`)
+
+// Server is a calibre instance that answered.
+type Server struct {
+	Host string // calibre's hostname as it reports it
+	Addr string // IP to connect to
+	Port int    // smart device TCP port
+}
+
+func (s Server) String() string { return fmt.Sprintf("%s (%s:%d)", s.Host, s.Addr, s.Port) }
+
+// ParseReply parses calibre's discovery answer.
+func ParseReply(msg string) (host string, port int, err error) {
+	m := reply.FindStringSubmatch(msg)
+	if m == nil {
+		return "", 0, fmt.Errorf("unexpected discovery reply %q", msg)
+	}
+	port, err = strconv.Atoi(m[3])
+	return m[1], port, err
+}
+
+// Find broadcasts to each calibre port in turn and returns the first answer.
+// target is normally "255.255.255.255"; tests can use 127.0.0.1.
+func Find(target string, wait time.Duration) (Server, error) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		return Server{}, err
+	}
+	defer conn.Close()
+	buf := make([]byte, 512)
+	var lastErr error = errors.New("no answer from calibre")
+	for _, p := range Ports {
+		dst := &net.UDPAddr{IP: net.ParseIP(target), Port: p}
+		if _, err := conn.WriteToUDP([]byte("hello"), dst); err != nil {
+			lastErr = err
+			continue
+		}
+		conn.SetReadDeadline(time.Now().Add(wait))
+		for {
+			n, from, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				break // timeout: try the next port
+			}
+			host, port, err := ParseReply(string(buf[:n]))
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return Server{Host: host, Addr: from.IP.String(), Port: port}, nil
+		}
+	}
+	return Server{}, lastErr
+}
