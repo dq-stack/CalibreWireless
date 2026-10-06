@@ -154,6 +154,9 @@ func run(o options, cfg session.Config) error {
 	s := session.New(conn, lib, cfg, session.Hooks{
 		Status: status,
 		BookReady: func(tmp string, b library.Book) {
+			if !kindle.HasCover(tmp) {
+				return
+			}
 			if name, err := covers.Write(tmp, b["thumbnail"]); err != nil {
 				log.Printf("cover for %s: %v", b.LPath(), err)
 			} else {
@@ -161,6 +164,9 @@ func run(o options, cfg session.Config) error {
 			}
 		},
 		BookDeleting: func(abs string, b library.Book) {
+			if !kindle.HasCover(abs) {
+				return
+			}
 			if err := covers.Remove(abs); err != nil {
 				log.Printf("removing cover for %s: %v", b.LPath(), err)
 			}
@@ -197,10 +203,10 @@ func fixCovers(c kindle.Covers, lib *library.Library, when string) {
 	}
 	added := 0
 	for _, b := range lib.Books {
-		if b["thumbnail"] == nil {
+		abs := lib.Abs(b.LPath())
+		if b["thumbnail"] == nil || !kindle.HasCover(abs) {
 			continue
 		}
-		abs := lib.Abs(b.LPath())
 		missing, err := c.NotCached(abs)
 		if err != nil || !missing {
 			continue

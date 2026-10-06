@@ -23,6 +23,17 @@ const (
 
 var ErrNoKey = errors.New("book has no cdeKey/cdeType")
 
+// HasCover reports whether calibre-style covers apply to this format. Like
+// calibre's USB driver, we only name covers for MOBI-family files; the Kindle
+// handles PDFs, TXT and the rest itself. (KFX: not yet supported.)
+func HasCover(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSuffix(path, ".part"))) {
+	case ".azw3", ".azw", ".mobi", ".prc":
+		return true
+	}
+	return false
+}
+
 // BookKey reads the cdeKey (EXTH 113) and cdeType (EXTH 501) from a MOBI/AZW3
 // file, the same fields calibre uses to name the Kindle thumbnail.
 func BookKey(path string) (key, cdeType string, err error) {

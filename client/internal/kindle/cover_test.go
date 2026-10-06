@@ -129,3 +129,11 @@ func TestRemoveSidecars(t *testing.T) {
 		t.Fatalf("left: %v", left)
 	}
 }
+
+func TestHasCover(t *testing.T) {
+	for p, want := range map[string]bool{"a.azw3": true, "a.AZW3.part": true, "a.mobi": true, "a.pdf": false, "a.pdf.part": false, "a.txt": false, "a.kfx": false} {
+		if HasCover(p) != want {
+			t.Errorf("HasCover(%q) != %v", p, want)
+		}
+	}
+}
