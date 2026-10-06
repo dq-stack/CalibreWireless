@@ -144,9 +144,6 @@ func TestPdocKeyAndAPNX(t *testing.T) {
 	if k := PdocKey("/mnt/us/documents/My Clippings.txt"); k != "*1a9c472a7d5089a9c584f12801fc383b43765ca5" {
 		t.Fatalf("PdocKey = %s", k)
 	}
-	if n := PDFThumbName("/mnt/us/documents/a.pdf"); bytes.ContainsRune([]byte(n), '*') {
-		t.Fatalf("FAT-unsafe name %s", n)
-	}
 	b, n, err := BuildAPNX(Header{Key: "u-1", CdeType: "EBOK", MobiVersion: 8, Name: "Book", TextLength: 4601})
 	if err != nil || n != 3 {
 		t.Fatalf("pages %d %v", n, err)

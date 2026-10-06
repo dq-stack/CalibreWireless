@@ -169,7 +169,8 @@ func (c *Catalog) Change(commands []map[string]any) error {
 	return nil
 }
 
-// PdocKey is the key the Kindle gives sideloaded personal documents: "*"
+// PdocKey is the key the Kindle gives sideloaded personal documents (PDF,
+// TXT): "*"
 // plus the SHA-1 of the full path (confirmed on FW 5.12 with My Clippings.txt).
 func PdocKey(path string) string {
 	h := sha1.Sum([]byte(path))

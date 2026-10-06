@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -223,21 +222,6 @@ func run(o options, cfg session.Config) error {
 						log.Printf("page numbers written: %d pages", n)
 					}
 				}
-			case kindle.IsPDF(tmp):
-				thumb, err := covers.WritePDF(final, b["thumbnail"])
-				if err != nil {
-					log.Printf("PDF cover for %s: %v", b.LPath(), err)
-					return
-				}
-				log.Printf("PDF cover written: %s", thumb)
-				guard(filepath.Base(thumb))
-				if catalog != nil {
-					jobs.Add(1)
-					go func() {
-						defer jobs.Done()
-						setPDFThumbnail(catalog, final, thumb)
-					}()
-				}
 			}
 		},
 		BookDeleting: func(abs string, b library.Book) {
@@ -246,8 +230,6 @@ func run(o options, cfg session.Config) error {
 				if err := covers.Remove(abs); err != nil {
 					log.Printf("removing cover for %s: %v", b.LPath(), err)
 				}
-			case kindle.IsPDF(abs):
-				covers.RemovePDF(abs)
 			}
 		},
 		BookDeleted: func(abs string, b library.Book) {
@@ -321,31 +303,6 @@ func addPageNumbers(lib *library.Library) {
 	}
 	if added > 0 {
 		log.Printf("page numbers added for %d book(s)", added)
-	}
-}
-
-// setPDFThumbnail waits for the Kindle to index a new PDF, then points its
-// catalog entry at our cover file. EXPERIMENTAL: the "thumbnail" field name
-// is inferred from cc.db's p_thumbnail column.
-func setPDFThumbnail(c *kindle.Catalog, path, thumb string) {
-	e, err := c.WaitFor(path, 75*time.Second)
-	if err != nil {
-		log.Printf("PDF cover: %v", err)
-		return
-	}
-	log.Printf("PDF indexed: uuid=%s key=%s type=%s thumbnail=%q", e.UUID, e.CdeKey, e.CdeType, e.Thumbnail)
-	if e.Thumbnail == thumb {
-		return
-	}
-	err = c.Change([]map[string]any{{"update": map[string]any{
-		"type": "Entry:Item", "uuid": e.UUID, "thumbnail": thumb,
-	}}})
-	if err != nil {
-		log.Printf("PDF cover: catalog update failed: %v", err)
-		return
-	}
-	if e2, err := c.WaitFor(path, 5*time.Second); err == nil {
-		log.Printf("PDF cover: catalog now has thumbnail=%q", e2.Thumbnail)
 	}
 }
 
