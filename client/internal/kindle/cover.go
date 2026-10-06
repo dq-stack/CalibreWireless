@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -198,6 +199,26 @@ func (c Covers) Remove(bookFile string) error {
 		}
 	}
 	return nil
+}
+
+// Guard watches one book's cover for a while after it arrives and puts it
+// back the moment the Kindle swaps in Amazon's placeholder (which happens
+// a few seconds after indexing while online).
+func (c Covers) Guard(name string, d time.Duration, restored func()) {
+	src := filepath.Join(c.Root, CacheDir, name)
+	dst := filepath.Join(c.Root, ThumbDir, name)
+	want, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(time.Second) {
+		if st, err := os.Stat(dst); err == nil && st.Size() == int64(len(want)) {
+			continue
+		}
+		if writeFile(dst, want) == nil && restored != nil {
+			restored()
+		}
+	}
 }
 
 // Restore copies cached covers back into system/thumbnails when the Kindle

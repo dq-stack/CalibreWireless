@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -165,6 +166,13 @@ func run(o options, cfg session.Config) error {
 		go func() { jobs.Wait(); close(done) }()
 		select {
 		case <-done:
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+		status("Finishing up (protecting new covers)…")
+		select {
+		case <-done:
+			status("Done")
 		case <-time.After(90 * time.Second):
 			log.Printf("gave up waiting for background jobs")
 		}
@@ -185,6 +193,17 @@ func run(o options, cfg session.Config) error {
 		conn.Close()
 	}()
 
+	// guard watches a new book's cover for 45 s (stopping waits for it).
+	guard := func(name string) {
+		jobs.Add(1)
+		go func() {
+			defer jobs.Done()
+			covers.Guard(name, 45*time.Second, func() {
+				log.Printf("cover restored right after the Kindle replaced it: %s", name)
+			})
+		}()
+	}
+
 	s := session.New(conn, lib, cfg, session.Hooks{
 		Status: status,
 		BookReady: func(tmp string, b library.Book) {
@@ -195,6 +214,7 @@ func run(o options, cfg session.Config) error {
 					log.Printf("cover for %s: %v", b.LPath(), err)
 				} else {
 					log.Printf("cover written: %s", name)
+					guard(name)
 				}
 				if o.apnx {
 					if n, err := kindle.WriteAPNX(tmp, final); err != nil {
@@ -210,6 +230,7 @@ func run(o options, cfg session.Config) error {
 					return
 				}
 				log.Printf("PDF cover written: %s", thumb)
+				guard(filepath.Base(thumb))
 				if catalog != nil {
 					jobs.Add(1)
 					go func() {

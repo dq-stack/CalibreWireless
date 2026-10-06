@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // fakeMOBI builds the smallest PDB/MOBI file with an EXTH block.
@@ -155,5 +156,24 @@ func TestPdocKeyAndAPNX(t *testing.T) {
 	}
 	if APNXPath("/d/Author/Title.azw3") != "/d/Author/Title.sdr/Title.apnx" {
 		t.Fatal(APNXPath("/d/Author/Title.azw3"))
+	}
+}
+
+func TestGuard(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ThumbDir), 0o755)
+	book := filepath.Join(root, "b.azw3")
+	os.WriteFile(book, fakeMOBI(map[uint32]string{113: "u-2", 501: "EBOK"}), 0o644)
+	c := Covers{Root: root}
+	name, _ := c.Write(book, thumb(jpeg))
+	dst := filepath.Join(root, ThumbDir, name)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		os.WriteFile(dst, []byte("amazon placeholder"), 0o644)
+	}()
+	n := 0
+	c.Guard(name, 2500*time.Millisecond, func() { n++ })
+	if b, _ := os.ReadFile(dst); !bytes.Equal(b, jpeg) || n != 1 {
+		t.Fatalf("guard: restored %d times, content %q", n, b)
 	}
 }
