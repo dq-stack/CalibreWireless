@@ -92,6 +92,20 @@ func run(o options, cfg session.Config) error {
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	var stopped atomic.Bool
 
+	// Local housekeeping first: it doesn't need calibre, so a tap fixes
+	// covers and page numbers even when calibre isn't found.
+	lib, err := library.Open(o.root)
+	if err != nil {
+		return err
+	}
+	log.Printf("%d books in %s", len(lib.Books), library.MetadataFile)
+	covers := kindle.Covers{Root: o.root}
+	fixCovers(covers, lib, "start")
+	defer fixCovers(covers, lib, "exit")
+	if o.apnx {
+		addPageNumbers(lib)
+	}
+
 	local := discover.LocalAddrs()
 	log.Printf("this device: %v", local)
 	where := ""
@@ -105,7 +119,6 @@ func run(o options, cfg session.Config) error {
 		rounds = 1
 	}
 	var srv discover.Server
-	var err error
 	for i := 0; i < rounds; i++ {
 		select {
 		case <-stop:
@@ -128,18 +141,6 @@ func run(o options, cfg session.Config) error {
 	default:
 		status("calibre not found" + where + ". Same network? Wireless connection started?")
 		return fmt.Errorf("discovery: %w", err)
-	}
-
-	lib, err := library.Open(o.root)
-	if err != nil {
-		return err
-	}
-	log.Printf("%d books in %s", len(lib.Books), library.MetadataFile)
-	covers := kindle.Covers{Root: o.root}
-	fixCovers(covers, lib, "connect")
-	defer fixCovers(covers, lib, "disconnect")
-	if o.apnx {
-		addPageNumbers(lib)
 	}
 
 	// While online the Kindle can swap a new book's cover for Amazon's
