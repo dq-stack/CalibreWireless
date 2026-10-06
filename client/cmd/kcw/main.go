@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ var version = "0.1.0-dev"
 type options struct {
 	root, host, bcast string
 	port, udpPort     int
+	apnx              bool
 }
 
 func main() {
@@ -47,6 +49,7 @@ func main() {
 	idle := flag.Duration("idle", 30*time.Minute, "disconnect after this long without transfers")
 	logFile := flag.String("log", "", "append log to this file (default stderr)")
 	statusCmd := flag.String("status", "", "program that shows status messages on screen (fbink or eips)")
+	flag.BoolVar(&o.apnx, "apnx", true, "write page numbers (APNX, calibre's fast method) for MOBI/AZW3 books")
 	flag.Parse()
 
 	if *logFile != "" {
@@ -135,6 +138,36 @@ func run(o options, cfg session.Config) error {
 	covers := kindle.Covers{Root: o.root}
 	fixCovers(covers, lib, "connect")
 	defer fixCovers(covers, lib, "disconnect")
+	if o.apnx {
+		addPageNumbers(lib)
+	}
+
+	// While online the Kindle can swap a new book's cover for Amazon's
+	// placeholder a few seconds after indexing it; put ours back promptly.
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	go func() {
+		for range tick.C {
+			if r, _ := covers.Restore(); len(r) > 0 {
+				log.Printf("covers restored during session: %v", r)
+			}
+		}
+	}()
+
+	catalog := kindle.NewCatalog()
+	if !catalog.Available() {
+		catalog = nil // e.g. the Mac test client
+	}
+	var jobs sync.WaitGroup
+	defer func() {
+		done := make(chan struct{})
+		go func() { jobs.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(90 * time.Second):
+			log.Printf("gave up waiting for background jobs")
+		}
+	}()
 
 	nc, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
@@ -154,21 +187,45 @@ func run(o options, cfg session.Config) error {
 	s := session.New(conn, lib, cfg, session.Hooks{
 		Status: status,
 		BookReady: func(tmp string, b library.Book) {
-			if !kindle.HasCover(tmp) {
-				return
-			}
-			if name, err := covers.Write(tmp, b["thumbnail"]); err != nil {
-				log.Printf("cover for %s: %v", b.LPath(), err)
-			} else {
-				log.Printf("cover written: %s", name)
+			final := strings.TrimSuffix(tmp, ".part")
+			switch {
+			case kindle.HasCover(tmp):
+				if name, err := covers.Write(tmp, b["thumbnail"]); err != nil {
+					log.Printf("cover for %s: %v", b.LPath(), err)
+				} else {
+					log.Printf("cover written: %s", name)
+				}
+				if o.apnx {
+					if n, err := kindle.WriteAPNX(tmp, final); err != nil {
+						log.Printf("page numbers for %s: %v", b.LPath(), err)
+					} else {
+						log.Printf("page numbers written: %d pages", n)
+					}
+				}
+			case kindle.IsPDF(tmp):
+				thumb, err := covers.WritePDF(final, b["thumbnail"])
+				if err != nil {
+					log.Printf("PDF cover for %s: %v", b.LPath(), err)
+					return
+				}
+				log.Printf("PDF cover written: %s", thumb)
+				if catalog != nil {
+					jobs.Add(1)
+					go func() {
+						defer jobs.Done()
+						setPDFThumbnail(catalog, final, thumb)
+					}()
+				}
 			}
 		},
 		BookDeleting: func(abs string, b library.Book) {
-			if !kindle.HasCover(abs) {
-				return
-			}
-			if err := covers.Remove(abs); err != nil {
-				log.Printf("removing cover for %s: %v", b.LPath(), err)
+			switch {
+			case kindle.HasCover(abs):
+				if err := covers.Remove(abs); err != nil {
+					log.Printf("removing cover for %s: %v", b.LPath(), err)
+				}
+			case kindle.IsPDF(abs):
+				covers.RemovePDF(abs)
 			}
 		},
 		BookDeleted: func(abs string, b library.Book) {
@@ -218,6 +275,55 @@ func fixCovers(c kindle.Covers, lib *library.Library, when string) {
 	}
 	if len(restored) > 0 || added > 0 {
 		log.Printf("covers (%s): %d restored, %d added", when, len(restored), added)
+	}
+}
+
+// addPageNumbers writes page numbers for calibre books that have none.
+func addPageNumbers(lib *library.Library) {
+	added := 0
+	for _, b := range lib.Books {
+		abs := lib.Abs(b.LPath())
+		// Only books calibre sent (they carry a cover); not Amazon purchases.
+		if b["thumbnail"] == nil || !kindle.HasCover(abs) {
+			continue
+		}
+		if _, err := os.Stat(kindle.APNXPath(abs)); err == nil {
+			continue
+		}
+		if n, err := kindle.WriteAPNX(abs, abs); err != nil {
+			log.Printf("page numbers for %s: %v", b.LPath(), err)
+		} else {
+			log.Printf("page numbers added: %s (%d pages)", b.LPath(), n)
+			added++
+		}
+	}
+	if added > 0 {
+		log.Printf("page numbers added for %d book(s)", added)
+	}
+}
+
+// setPDFThumbnail waits for the Kindle to index a new PDF, then points its
+// catalog entry at our cover file. EXPERIMENTAL: the "thumbnail" field name
+// is inferred from cc.db's p_thumbnail column.
+func setPDFThumbnail(c *kindle.Catalog, path, thumb string) {
+	e, err := c.WaitFor(path, 75*time.Second)
+	if err != nil {
+		log.Printf("PDF cover: %v", err)
+		return
+	}
+	log.Printf("PDF indexed: uuid=%s key=%s type=%s thumbnail=%q", e.UUID, e.CdeKey, e.CdeType, e.Thumbnail)
+	if e.Thumbnail == thumb {
+		return
+	}
+	err = c.Change([]map[string]any{{"update": map[string]any{
+		"type": "Entry:Item", "uuid": e.UUID, "thumbnail": thumb,
+	}}})
+	if err != nil {
+		log.Printf("PDF cover: catalog update failed: %v", err)
+		return
+	}
+	if e2, err := c.WaitFor(path, 5*time.Second); err == nil {
+		log.Printf("PDF cover: catalog now has thumbnail=%q", e2.Thumbnail)
 	}
 }
 

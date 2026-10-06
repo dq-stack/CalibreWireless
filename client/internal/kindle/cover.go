@@ -34,51 +34,74 @@ func HasCover(path string) bool {
 	return false
 }
 
+// Header is what we need from a MOBI/AZW3 file's headers.
+type Header struct {
+	Name        string // PDB name (calibre's APNX "acr")
+	Key         string // EXTH 113: cdeKey/ASIN (calibre's book UUID for calibre books)
+	CdeType     string // EXTH 501: EBOK, PDOC, ...
+	MobiVersion int
+	TextLength  int // uncompressed text length, from record 0
+}
+
 // BookKey reads the cdeKey (EXTH 113) and cdeType (EXTH 501) from a MOBI/AZW3
 // file, the same fields calibre uses to name the Kindle thumbnail.
 func BookKey(path string) (key, cdeType string, err error) {
-	f, err := os.Open(path)
+	h, err := ReadHeader(path)
 	if err != nil {
 		return "", "", err
 	}
-	defer f.Close()
-	return bookKey(f)
+	if h.Key == "" || h.CdeType == "" {
+		return "", "", ErrNoKey
+	}
+	return h.Key, h.CdeType, nil
 }
 
-func bookKey(r io.ReaderAt) (string, string, error) {
+func ReadHeader(path string) (Header, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Header{}, err
+	}
+	defer f.Close()
+	return readHeader(f)
+}
+
+func readHeader(r io.ReaderAt) (Header, error) {
+	var h Header
 	hdr := make([]byte, 78+16)
 	if _, err := r.ReadAt(hdr, 0); err != nil {
-		return "", "", fmt.Errorf("pdb header: %w", err)
+		return h, fmt.Errorf("pdb header: %w", err)
 	}
 	if string(hdr[60:68]) != "BOOKMOBI" {
-		return "", "", fmt.Errorf("not a MOBI/AZW3 file (%q)", hdr[60:68])
+		return h, fmt.Errorf("not a MOBI/AZW3 file (%q)", hdr[60:68])
 	}
+	h.Name = string(bytes.TrimRight(hdr[:32], "\x00"))
 	if binary.BigEndian.Uint16(hdr[76:78]) < 2 {
-		return "", "", errors.New("too few records")
+		return h, errors.New("too few records")
 	}
 	rec0 := int64(binary.BigEndian.Uint32(hdr[78:82]))
 	rec1 := int64(binary.BigEndian.Uint32(hdr[86:90]))
 	if rec1 <= rec0 || rec1-rec0 > 1<<20 {
-		return "", "", errors.New("bad record 0 size")
+		return h, errors.New("bad record 0 size")
 	}
 	rec := make([]byte, rec1-rec0)
 	if _, err := r.ReadAt(rec, rec0); err != nil {
-		return "", "", fmt.Errorf("record 0: %w", err)
+		return h, fmt.Errorf("record 0: %w", err)
 	}
 	if len(rec) < 0x84 || string(rec[16:20]) != "MOBI" {
-		return "", "", errors.New("no MOBI header")
+		return h, errors.New("no MOBI header")
 	}
+	h.TextLength = int(binary.BigEndian.Uint32(rec[4:8]))
+	h.MobiVersion = int(binary.BigEndian.Uint32(rec[36:40]))
 	mobiLen := int(binary.BigEndian.Uint32(rec[20:24]))
 	if binary.BigEndian.Uint32(rec[0x80:0x84])&0x40 == 0 {
-		return "", "", ErrNoKey // no EXTH block
+		return h, nil // no EXTH block
 	}
 	p := 16 + mobiLen
 	if p+12 > len(rec) || string(rec[p:p+4]) != "EXTH" {
-		return "", "", errors.New("EXTH missing")
+		return h, errors.New("EXTH missing")
 	}
 	count := int(binary.BigEndian.Uint32(rec[p+8 : p+12]))
 	p += 12
-	var key, typ string
 	for i := 0; i < count && p+8 <= len(rec); i++ {
 		id := binary.BigEndian.Uint32(rec[p : p+4])
 		n := int(binary.BigEndian.Uint32(rec[p+4 : p+8]))
@@ -88,16 +111,13 @@ func bookKey(r io.ReaderAt) (string, string, error) {
 		data := rec[p+8 : p+n]
 		switch id {
 		case 113:
-			key = strings.TrimSpace(string(data))
+			h.Key = strings.TrimSpace(string(data))
 		case 501:
-			typ = strings.TrimSpace(string(data))
+			h.CdeType = strings.TrimSpace(string(data))
 		}
 		p += n
 	}
-	if key == "" || typ == "" {
-		return "", "", ErrNoKey
-	}
-	return key, typ, nil
+	return h, nil
 }
 
 // ThumbName is the Kindle's thumbnail file name for a book.
@@ -255,5 +275,48 @@ func RemoveSidecars(bookFile string) {
 				}
 			}
 		}
+	}
+}
+
+// PDF covers. The Kindle keys sideloaded PDFs as "*<sha1 of path>", and "*"
+// can't appear in a FAT file name, so the Kindle never stores a cover file for
+// them. We save the cover under the key without the "*" and then point the
+// catalog entry at it (EXPERIMENTAL: needs device confirmation).
+
+// IsPDF reports whether path (or its .part file) is a PDF.
+func IsPDF(path string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSuffix(path, ".part")), ".pdf")
+}
+
+// PDFThumbName is the cover file name we use for a PDF that will live at
+// finalPath.
+func PDFThumbName(finalPath string) string {
+	return ThumbName(strings.TrimPrefix(PdocKey(finalPath), "*"), "PDOC")
+}
+
+// WritePDF saves a PDF's cover and returns the full path of the thumbnail.
+func (c Covers) WritePDF(finalPath string, thumb any) (string, error) {
+	img, err := JPEG(thumb)
+	if err != nil {
+		return "", err
+	}
+	name := PDFThumbName(finalPath)
+	for _, dir := range []string{ThumbDir, CacheDir} {
+		d := filepath.Join(c.Root, dir)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return "", err
+		}
+		if err := writeFile(filepath.Join(d, name), img); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(c.Root, ThumbDir, name), nil
+}
+
+// RemovePDF deletes a PDF's cover files.
+func (c Covers) RemovePDF(finalPath string) {
+	name := PDFThumbName(finalPath)
+	for _, dir := range []string{ThumbDir, CacheDir} {
+		os.Remove(filepath.Join(c.Root, dir, name))
 	}
 }
