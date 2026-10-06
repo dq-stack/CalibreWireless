@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -194,18 +193,12 @@ func run(o options, cfg session.Config) error {
 	}()
 
 	// guard watches a new book's cover for 45 s (stopping waits for it).
-	// After putting a cover back, it "touches" the book's catalog entry (same
-	// thumbnail path, no real change) so the library redraws the tile instead
-	// of showing the placeholder it already loaded.
-	guard := func(name, final string) {
+	guard := func(name string) {
 		jobs.Add(1)
 		go func() {
 			defer jobs.Done()
 			covers.Guard(name, 45*time.Second, func() {
 				log.Printf("cover restored right after the Kindle replaced it: %s", name)
-				if catalog != nil {
-					go touchThumbnail(catalog, final, filepath.Join(o.root, kindle.ThumbDir, name))
-				}
 			})
 		}()
 	}
@@ -220,7 +213,7 @@ func run(o options, cfg session.Config) error {
 					log.Printf("cover for %s: %v", b.LPath(), err)
 				} else {
 					log.Printf("cover written: %s", name)
-					guard(name, final)
+					guard(name)
 				}
 				if o.apnx {
 					if n, err := kindle.WriteAPNX(tmp, final); err != nil {
@@ -311,28 +304,6 @@ func addPageNumbers(lib *library.Library) {
 	if added > 0 {
 		log.Printf("page numbers added for %d book(s)", added)
 	}
-}
-
-// touchThumbnail re-sends a book's existing thumbnail path to the catalog so
-// the library redraws its tile.
-func touchThumbnail(c *kindle.Catalog, book, thumb string) {
-	e, err := c.WaitFor(book, 20*time.Second)
-	if err != nil {
-		log.Printf("cover refresh: %v", err)
-		return
-	}
-	if e.Thumbnail != "" && e.Thumbnail != thumb {
-		log.Printf("cover refresh: catalog thumbnail is %q, not ours; leaving it", e.Thumbnail)
-		return
-	}
-	err = c.Change([]map[string]any{{"update": map[string]any{
-		"type": "Entry:Item", "uuid": e.UUID, "thumbnail": thumb,
-	}}})
-	if err != nil {
-		log.Printf("cover refresh: %v", err)
-		return
-	}
-	log.Printf("cover refresh sent for %s", filepath.Base(book))
 }
 
 // screen is the status display program: an FBInk binary, eips, or "".
