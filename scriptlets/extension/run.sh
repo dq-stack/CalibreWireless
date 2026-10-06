@@ -16,6 +16,7 @@ NAME="Kindle"
 FORMATS="azw3,mobi,azw,kfx,pdf,txt"
 READ_COL=""
 READ_DATE_COL=""
+READ_PERCENT=0
 IDLE="30m"
 [ -f "$APP/config.sh" ] && . "$APP/config.sh"
 
@@ -105,6 +106,7 @@ set -- -root /mnt/us -log "$LOG" -status "$SHOW" -udp-port "$UDP_PORT" \
 [ -n "$PASSWORD" ] && set -- "$@" -password "$PASSWORD"
 [ -n "$READ_COL" ] && set -- "$@" -read-col "$READ_COL"
 [ -n "$READ_DATE_COL" ] && set -- "$@" -read-date-col "$READ_DATE_COL"
+[ -n "$READ_PERCENT" ] && set -- "$@" -read-percent "$READ_PERCENT"
 "$RUN/kcw" "$@" 2>/dev/null &
 KCW=$!
 echo "$KCW" > "$RUN/pid"

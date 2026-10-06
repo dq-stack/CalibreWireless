@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/kindle"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/library"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/proto"
+	"github.com/dq-stack/kindle-calibre-wireless/client/internal/readsync"
 	"github.com/dq-stack/kindle-calibre-wireless/client/internal/session"
 )
 
@@ -32,6 +34,7 @@ type options struct {
 	root, host, bcast string
 	port, udpPort     int
 	apnx              bool
+	readPercent       float64
 }
 
 func main() {
@@ -49,6 +52,7 @@ func main() {
 	idle := flag.Duration("idle", 30*time.Minute, "disconnect after this long without transfers")
 	logFile := flag.String("log", "", "append log to this file (default stderr)")
 	statusCmd := flag.String("status", "", "program that shows status messages on screen (fbink or eips)")
+	flag.Float64Var(&o.readPercent, "read-percent", 0, "also count a book as read at this progress % (0 = only the Kindle's Mark as Read)")
 	flag.BoolVar(&o.apnx, "apnx", true, "write page numbers (APNX, calibre's fast method) for MOBI/AZW3 books")
 	flag.Parse()
 
@@ -203,8 +207,15 @@ func run(o options, cfg session.Config) error {
 		}()
 	}
 
+	var readState func(string, library.Book) (any, any)
+	if catalog != nil && (cfg.ReadCol != "" || cfg.ReadDateCol != "") {
+		readState = newReadState(o, catalog, cfg)
+		defer readStore.Save()
+	}
+
 	s := session.New(conn, lib, cfg, session.Hooks{
-		Status: status,
+		Status:    status,
+		ReadState: readState,
 		BookReady: func(tmp string, b library.Book) {
 			final := strings.TrimSuffix(tmp, ".part")
 			switch {
@@ -303,6 +314,43 @@ func addPageNumbers(lib *library.Library) {
 	}
 	if added > 0 {
 		log.Printf("page numbers added for %d book(s)", added)
+	}
+}
+
+var readStore *readsync.Store
+
+// newReadState answers calibre's read-status questions from cc.db. Each book
+// is worked out once per connection (calibre may ask twice).
+func newReadState(o options, c *kindle.Catalog, cfg session.Config) func(string, library.Book) (any, any) {
+	readStore = readsync.OpenStore(filepath.Join(o.root, "extensions", "calibre-wireless", "readstate.json"))
+	rule := readsync.Rule{Marked: true, Percent: o.readPercent}
+	type answer struct{ read, date any }
+	var entries map[string]kindle.Entry
+	answers := map[string]answer{}
+	return func(abs string, b library.Book) (any, any) {
+		if a, ok := answers[abs]; ok {
+			return a.read, a.date
+		}
+		if entries == nil {
+			var err error
+			if entries, err = c.Entries(filepath.Join(o.root, "documents") + "/"); err != nil {
+				log.Printf("read status: %v", err)
+				entries = map[string]kindle.Entry{}
+			}
+			log.Printf("read status: %d books in the Kindle catalog", len(entries))
+		}
+		e, ok := entries[abs]
+		if !ok {
+			answers[abs] = answer{readsync.CalibreValue(b, cfg.ReadCol), readsync.CalibreValue(b, cfg.ReadDateCol)}
+			return answers[abs].read, answers[abs].date
+		}
+		k := readsync.FromEntry(e, rule)
+		r, d := readStore.Report(b.LPath(), b, k, cfg.ReadCol, cfg.ReadDateCol)
+		if r != readsync.CalibreValue(b, cfg.ReadCol) || d != readsync.CalibreValue(b, cfg.ReadDateCol) {
+			log.Printf("read status: %s -> read=%v last=%v", b.LPath(), r, d)
+		}
+		answers[abs] = answer{r, d}
+		return r, d
 	}
 }
 

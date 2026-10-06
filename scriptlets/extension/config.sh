@@ -17,10 +17,17 @@ PORT=9090
 # one it can.
 FORMATS="azw3,mobi,azw,kfx,pdf,txt"
 
-# Read status back to calibre (optional). Names of calibre custom columns:
-# a Yes/No column and a Date column, e.g. READ_COL="#read".
+# Read status back to calibre (optional). Create two custom columns in
+# calibre (Preferences > Add your own columns): a Yes/No column and a Date
+# column, then put their lookup names here with a #, e.g. READ_COL="#read".
+# Changes you make in calibre are kept; the Kindle's value is only sent when
+# it changes on the Kindle.
 READ_COL=""
 READ_DATE_COL=""
+
+# A book counts as read when you use the Kindle's "Mark as Read". Set a
+# number (e.g. 98) to also count books at or past that % as read.
+READ_PERCENT=0
 
 # Disconnect after this long with no transfers (e.g. 15m, 1h).
 IDLE="30m"
