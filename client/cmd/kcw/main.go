@@ -178,7 +178,10 @@ func run(o options, cfg session.Config) error {
 		status(fmt.Sprintf("Stopped. %d book(s) received", s.Received()))
 		return nil
 	}
-	status("Connection lost")
+	var shown session.ShownError
+	if !errors.As(err, &shown) {
+		status("Connection lost")
+	}
 	return err
 }
 

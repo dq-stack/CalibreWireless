@@ -54,6 +54,17 @@ type Hooks struct {
 // ErrEjected means calibre ended the connection normally.
 var ErrEjected = errors.New("calibre disconnected")
 
+// ShownError is an error whose message is already on screen; callers
+// shouldn't replace it with a generic one.
+type ShownError struct{ Msg string }
+
+func (e ShownError) Error() string { return e.Msg }
+
+func (s *Session) fail(msg string) error {
+	s.hooks.Status(msg)
+	return ShownError{msg}
+}
+
 type Session struct {
 	cfg   Config
 	hooks Hooks
@@ -149,8 +160,7 @@ func (s *Session) handle(op int, raw json.RawMessage) error {
 		var a struct{ MessageKind int }
 		json.Unmarshal(raw, &a)
 		if a.MessageKind == 1 {
-			s.hooks.Status("Wrong calibre password")
-			return errors.New("calibre rejected the password")
+			return s.fail("Wrong password. Set PASSWORD in extensions/calibre-wireless/config.sh")
 		}
 		return nil
 	case proto.CalibreBusy:
@@ -158,8 +168,11 @@ func (s *Session) handle(op int, raw json.RawMessage) error {
 			OtherDevice string `json:"otherDevice"`
 		}
 		json.Unmarshal(raw, &a)
-		s.hooks.Status("calibre is busy with another device: " + a.OtherDevice)
-		return fmt.Errorf("calibre is busy with another device (%s)", a.OtherDevice)
+		if strings.Contains(a.OtherDevice, "Kindle") {
+			// Usually calibre still holding this Kindle from a USB connection.
+			return s.fail("calibre still has a USB Kindle connected. Eject it in calibre (or restart calibre) and tap again")
+		}
+		return s.fail("calibre is busy with another device: " + a.OtherDevice)
 	default:
 		log.Printf("ignoring opcode %s: %.200s", proto.Name(op), raw)
 		return nil
