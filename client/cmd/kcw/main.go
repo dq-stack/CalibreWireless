@@ -88,16 +88,30 @@ func run(o options, cfg session.Config) error {
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	var stopped atomic.Bool
 
-	status("Looking for calibre…")
-	srv, err := discover.Find(o.bcast, o.udpPort, 3*time.Second)
-	for i := 1; err != nil && i < 4; i++ {
+	local := discover.LocalAddrs()
+	log.Printf("this device: %v", local)
+	where := ""
+	if len(local) > 0 {
+		where = " from " + strings.SplitN(local[0], "/", 2)[0]
+	}
+	status("Looking for calibre" + where + "…")
+	// With a fixed HOST, one quick search is enough before falling back to it.
+	rounds := 3
+	if o.host != "" {
+		rounds = 1
+	}
+	var srv discover.Server
+	var err error
+	for i := 0; i < rounds; i++ {
 		select {
 		case <-stop:
 			status("Stopped")
 			return errors.New("stopped while looking for calibre")
 		default:
 		}
-		srv, err = discover.Find(o.bcast, o.udpPort, 3*time.Second)
+		if srv, err = discover.Find(o.bcast, o.udpPort, 3*time.Second); err == nil {
+			break
+		}
 	}
 	var addr string
 	switch {
@@ -108,7 +122,7 @@ func run(o options, cfg session.Config) error {
 		log.Printf("discovery failed (%v), using %s", err, o.host)
 		addr = net.JoinHostPort(o.host, fmt.Sprint(o.port))
 	default:
-		status("calibre not found. In calibre: Connect/share > Start wireless device connection")
+		status("calibre not found" + where + ". Same network? Wireless connection started?")
 		return fmt.Errorf("discovery: %w", err)
 	}
 

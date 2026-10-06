@@ -48,27 +48,45 @@ func Find(target string, localPort int, wait time.Duration) (Server, error) {
 		return Server{}, err
 	}
 	defer conn.Close()
-	buf := make([]byte, 512)
+	// calibre answers on whichever of its ports it managed to open, so send
+	// to all of them at once and take the first answer.
 	var lastErr error = errors.New("no answer from calibre")
+	sent := 0
 	for _, p := range Ports {
 		dst := &net.UDPAddr{IP: net.ParseIP(target), Port: p}
 		if _, err := conn.WriteToUDP([]byte("hello"), dst); err != nil {
 			lastErr = err
 			continue
 		}
-		conn.SetReadDeadline(time.Now().Add(wait))
-		for {
-			n, from, err := conn.ReadFromUDP(buf)
-			if err != nil {
-				break // timeout: try the next port
-			}
-			host, port, err := ParseReply(string(buf[:n]))
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			return Server{Host: host, Addr: from.IP.String(), Port: port}, nil
+		sent++
+	}
+	if sent == 0 {
+		return Server{}, lastErr
+	}
+	buf := make([]byte, 512)
+	conn.SetReadDeadline(time.Now().Add(wait))
+	for {
+		n, from, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			return Server{}, lastErr // timed out
+		}
+		host, port, err := ParseReply(string(buf[:n]))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return Server{Host: host, Addr: from.IP.String(), Port: port}, nil
+	}
+}
+
+// LocalAddrs lists this device's IPv4 addresses, for logs and the status line.
+func LocalAddrs() []string {
+	var out []string
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && ipn.IP.To4() != nil {
+			out = append(out, ipn.String())
 		}
 	}
-	return Server{}, lastErr
+	return out
 }
