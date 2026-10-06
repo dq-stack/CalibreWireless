@@ -190,9 +190,12 @@ Kindle side (cc.db, `/var/local/cc.db`, table `Entries`, `p_type='Entry:Item'`):
 - `p_location` = full path (`/mnt/us/documents/...`), join key with lpath.
 - `p_percentFinished` = real progress (InkSights finding: use this, not timer.model).
 - `p_lastAccess` = last opened (epoch seconds) → `_last_read_date_` (ISO 8601 UTC).
-- read state: **VERIFY** whether FW 5.12 has a "mark as read" column (e.g. `p_readState`);
-  otherwise `_is_read_ = percentFinished >= threshold` (config, default 98).
+- read state: FW 5.12 **has `p_readState`** (probe, 6 Oct). Seen values: empty (NULL) and 1.
+  **VERIFY** the meaning (mark a book "as read" on the Kindle, re-probe). Fallback:
+  `_is_read_ = percentFinished >= threshold` (config, default 98).
 - Open read-only (`file:/var/local/cc.db?mode=ro`); the framework writes it constantly.
+  The probe's `.tables` hit "database is locked" while the PRAGMA worked, so set a busy
+  timeout and retry reads.
 
 ## 10. Covers and the Amazon cover bug
 
@@ -230,19 +233,28 @@ From ccsync (MIT), for later milestones:
   (default `series,tags`). So the user configures this in calibre, not on the Kindle.
 - New books aren't in cc.db until the Kindle indexes them: after a transfer, poll cc.db for the
   new `p_location`s (e.g. every 2 s, up to 60 s) before sending the change request.
-- **VERIFY** on FW 5.12: port 9101 is listening, `/tmp/session_token` exists, ccsync's
-  command format is accepted.
+- Probe (FW 5.12.2.2): 127.0.0.1:9101 is listening, `/tmp/session_token` exists, Entries has
+  `p_collectionCount`, 0 collections today. **VERIFY** ccsync's command format is accepted.
 
 ## 12. Kindle platform notes (from CoverSleep / InkSights)
 
-- PW2: FW 5.12.2.2, soft-float, kernel 3.0.x (**VERIFY** `uname -r`) → Go 1.23 (1.24+ needs
-  kernel ≥ 3.2). Static `CGO_ENABLED=0 GOARCH=arm GOARM=7` runs on soft- and hard-float firmware.
+- PW2: FW 5.12.2.2, soft-float (only /lib/ld-linux.so.3), kernel **3.0.35-lab126** (probe)
+  → Go 1.23 (1.24+ needs kernel ≥ 3.2). Tools present: /usr/bin/sqlite3, lipc-*, eips, wget,
+  curl, netstat. No fbink on the PATH. Static `CGO_ENABLED=0 GOARCH=arm GOARM=7` runs on soft- and hard-float firmware.
 - USB drive mode can SIGKILL processes using /mnt/us: run from `/tmp`, and stop on
   `com.lab126.hal usbConfigured` / `com.lab126.volumd userstoreIsLikelyToUnMount`.
 - Sleep: `lipc-set-prop com.lab126.powerd preventScreenSaver 1` while connected, `0` on exit
   (always, via trap).
-- Wi-Fi: **VERIFY** lipc props on 5.12 (`com.lab126.cmd wirelessEnable`, `com.lab126.wifid
-  cmState`). Restore the previous state on exit.
+- Wi-Fi: `com.lab126.cmd wirelessEnable` = 0 in airplane mode, `com.lab126.wifid cmState` = NA,
+  and wlan0 doesn't exist while off. Turn on with `lipc-set-prop com.lab126.cmd wirelessEnable 1`,
+  wait for cmState `CONNECTED` (**VERIFY**), and restore the previous state on exit.
+- Firewall: INPUT policy DROP; UDP is accepted only for ESTABLISHED. The discovery reply
+  comes from calibre's unicast IP to a datagram we sent to 255.255.255.255, so conntrack
+  probably won't match it and the reply is **dropped**. Options: a temporary
+  `iptables -I INPUT -p udp --sport <calibre port> -j ACCEPT` for the 5 ports, removed on exit
+  (needs Dan's OK), or a fixed calibre address in the config. TCP to calibre is outbound, so
+  it's fine.
+- OTA: no update files in /mnt/us (probe).
 - Status on screen: FBInk (`/mnt/us/extensions/custom-screensaver/bin/fbink` exists on Dan's
   Kindle; we should ship our own copy, or fall back to `eips`).
 - Clock: Dan's Kindle now has its time set; other users' may show UTC. `_last_read_date_` is
