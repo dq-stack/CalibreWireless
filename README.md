@@ -134,6 +134,9 @@ is the same with calibre over USB.
   `amazon-cover-bug/` (calibre's own backup folder), page numbers in each book's `.sdr` folder,
   and its own files in `extensions/calibre-wireless/`.
 - **The Kindle's database (`cc.db`)** is only ever **read** (for read status), never written.
+- **What calibre can read:** only files in `documents/` and `reading-stats/` (the
+  [InkSights](https://github.com/dq-stack/InkSights) reading log). Its calibre backup plugin
+  uses this to back up reading data over Wi-Fi.
 
 The app runs from `/tmp` while connected so that plugging in USB can't kill it halfway.
 
