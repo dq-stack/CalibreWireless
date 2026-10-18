@@ -197,3 +197,61 @@ func TestEject(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func (f *fakeCalibre) getFile(lpath string) []byte {
+	f.t.Helper()
+	op, m := f.call(proto.GetBookFileSegment, map[string]any{"lpath": lpath, "position": 0})
+	if op != proto.OK {
+		f.t.Fatalf("%s: op %d", lpath, op)
+	}
+	var buf bytes.Buffer
+	if err := f.c.ReadRaw(&buf, int64(m["fileLength"].(float64))); err != nil {
+		f.t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestFileSegmentReadsAndLists(t *testing.T) {
+	fc, lib, _ := setup(t, Config{})
+	write := func(rel, data string) {
+		p := filepath.Join(lib.Root, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(data), 0o644)
+	}
+	write("documents/A/Book.azw3", "book")
+	write("documents/A/Book.sdr/Book123.azw3f", "timer")
+	write("documents/A/Book.sdr/._Book123.azw3f", "junk")
+	write("reading-stats/snapshots.jsonl", "{}\n")
+	write("reading-stats/sidecars/X.sdr/X.mbs", "mbs")
+	write("system/secret", "no")
+
+	if got := string(fc.getFile("documents/A/Book.azw3")); got != "book" {
+		t.Errorf("book = %q", got)
+	}
+	if got := string(fc.getFile("reading-stats/snapshots.jsonl")); got != "{}\n" {
+		t.Errorf("stats log = %q", got)
+	}
+	for _, bad := range []string{"system/secret", "documents/../system/secret", "/etc/passwd", "documents/A", "reading-stats"} {
+		if got := fc.getFile(bad); len(got) != 0 {
+			t.Errorf("%s served %q", bad, got)
+		}
+	}
+	list := func(lpath string) []ListEntry {
+		var l []ListEntry
+		if err := json.Unmarshal(fc.getFile(lpath), &l); err != nil {
+			t.Fatalf("%s: %v", lpath, err)
+		}
+		return l
+	}
+	if l := list("documents/A/Book.sdr/"); len(l) != 1 || l[0] != (ListEntry{"Book123.azw3f", 5}) {
+		t.Errorf("sdr listing = %v", l)
+	}
+	if l := list("reading-stats/"); len(l) != 2 || l[0].Path != "sidecars/X.sdr/X.mbs" || l[1].Path != "snapshots.jsonl" {
+		t.Errorf("reading-stats listing = %v", l)
+	}
+	for _, empty := range []string{"documents/Missing.sdr/", "system/", "documents/../system/"} {
+		if l := list(empty); len(l) != 0 {
+			t.Errorf("%s listing = %v", empty, l)
+		}
+	}
+}

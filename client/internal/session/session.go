@@ -3,6 +3,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -50,6 +51,9 @@ type Hooks struct {
 	// Status shows a short message to the user.
 	Status func(string)
 }
+
+// ErrNotReadable means calibre asked for a file outside ReadableDirs.
+var ErrNotReadable = errors.New("not a readable file")
 
 // ErrEjected means calibre ended the connection normally.
 var ErrEjected = errors.New("calibre disconnected")
@@ -467,15 +471,97 @@ func (s *Session) deleteBooks(raw json.RawMessage) error {
 	return s.lib.Save()
 }
 
+// ReadableDirs are the top-level folders calibre may read files from.
+// reading-stats/ is the InkSights app's data, read by its calibre backup plugin.
+var ReadableDirs = []string{library.BooksDir, "reading-stats"}
+
+// readablePath maps a requested lpath to a real path, or "" if it is unsafe
+// or outside ReadableDirs.
+func (s *Session) readablePath(lpath string) string {
+	if lpath == "" || strings.HasPrefix(lpath, "/") || strings.ContainsAny(lpath, "\\\x00") {
+		return ""
+	}
+	parts := strings.Split(lpath, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return ""
+		}
+	}
+	for _, d := range ReadableDirs {
+		if parts[0] != d {
+			continue
+		}
+		p := s.lib.Abs(lpath)
+		base, err1 := filepath.EvalSymlinks(filepath.Join(s.lib.Root, d))
+		real, err2 := filepath.EvalSymlinks(p)
+		if err1 != nil || err2 != nil || !(real == base || strings.HasPrefix(real, base+string(filepath.Separator))) {
+			return ""
+		}
+		return p
+	}
+	return ""
+}
+
+// ListEntry is one file in a folder listing.
+type ListEntry struct {
+	Path string `json:"path"` // relative to the listed folder, "/"-separated
+	Size int64  `json:"size"`
+}
+
+// listing walks dir (recursively, skipping dot files) for a folder request.
+// A missing folder is an empty list.
+func listing(dir string) []ListEntry {
+	out := []ListEntry{}
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(info.Name(), ".") && p != dir {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode().IsRegular() {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, ListEntry{filepath.ToSlash(rel), info.Size()})
+		}
+		return nil
+	})
+	return out
+}
+
 func (s *Session) fileSegment(raw json.RawMessage) error {
 	var a struct {
 		LPath string `json:"lpath"`
 	}
 	json.Unmarshal(raw, &a)
-	clean, err := library.CleanLPath(a.LPath)
+	// An lpath ending in "/" asks for a JSON listing of that folder, so the
+	// InkSights backup plugin can find a book's .sdr sidecar files. calibre
+	// itself only ever asks for book files.
+	if dir := strings.TrimSuffix(a.LPath, "/"); dir != a.LPath {
+		list := []ListEntry{}
+		if p := s.readablePath(dir); p != "" {
+			if st, err := os.Stat(p); err == nil && st.IsDir() {
+				list = listing(p)
+			}
+		}
+		data, _ := json.Marshal(list)
+		if err := s.ok(obj{"fileLength": len(data)}); err != nil {
+			return err
+		}
+		return s.c.WriteRaw(bytes.NewReader(data))
+	}
 	var f *os.File
-	if err == nil && clean == a.LPath {
-		f, err = os.Open(s.lib.Abs(a.LPath))
+	err := ErrNotReadable
+	if p := s.readablePath(a.LPath); p != "" {
+		f, err = os.Open(p)
+		if err == nil {
+			if st, e := f.Stat(); e != nil || !st.Mode().IsRegular() {
+				f.Close()
+				f, err = nil, ErrNotReadable
+			}
+		}
 	}
 	if err != nil {
 		// calibre loops until it gets OK; an empty file ends the request.
