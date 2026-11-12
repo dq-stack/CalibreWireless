@@ -14,7 +14,7 @@ mkdir -p "$APP/bin" "$STAGE/documents" release
 
 (cd client && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 "$GO" build -trimpath \
     -ldflags="-s -w -X main.version=$VERSION" -o "$APP/bin/kcw" ./cmd/kcw)
-cp scriptlets/extension/run.sh scriptlets/extension/config.default.sh scriptlets/extension/icon.png "$APP/"
+cp scriptlets/extension/run.sh scriptlets/extension/msgbox.sh scriptlets/extension/config.default.sh scriptlets/extension/icon.png "$APP/"
 cp LICENSE "$APP/LICENSE"
 echo "$VERSION" > "$APP/VERSION"
 cp "scriptlets/Calibre Wireless.sh" "$STAGE/documents/"

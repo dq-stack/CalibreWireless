@@ -27,11 +27,16 @@ STATUS_WITH=""
 log() { echo "$(date '+%Y/%m/%d %H:%M:%S') run: $*" >> "$LOG"; }
 
 # Status display: FBInk if one is installed (it's nicer), else the Kindle's
-# built-in eips. STATUS_WITH="eips" in config.sh forces eips.
+# built-in eips. STATUS_WITH="eips" in config.sh forces eips. On hard-float
+# firmware (5.16.3+) FBInk messages go in a box in the middle of the screen
+# (msgbox.sh); elsewhere they're one line near the bottom.
 SHOW=""
+FBINKS="/mnt/us/extensions/custom-screensaver/bin/fbink /mnt/us/libkh/bin/fbink \
+    /mnt/us/extensions/MRInstaller/bin/fbink /usr/bin/fbink /mnt/us/usbnet/bin/fbink"
+[ -e /lib/ld-linux-armhf.so.3 ] &&
+    FBINKS="/var/local/kmc/kindlehf/bin/fbink /mnt/us/extensions/custom-screensaver/bin/fbink_hf $FBINKS"
 if [ "$STATUS_WITH" != "eips" ]; then
-    for f in "$RUN/fbink" /mnt/us/extensions/custom-screensaver/bin/fbink /mnt/us/libkh/bin/fbink \
-             /mnt/us/extensions/MRInstaller/bin/fbink /usr/bin/fbink /mnt/us/usbnet/bin/fbink; do
+    for f in "$RUN/fbink" $FBINKS; do
         if [ -x "$f" ]; then
             [ "$f" = "$RUN/fbink" ] || cp "$f" "$RUN/fbink"
             SHOW="$RUN/fbink"
@@ -40,9 +45,17 @@ if [ "$STATUS_WITH" != "eips" ]; then
     done
 fi
 [ -z "$SHOW" ] && SHOW="$(command -v eips)"
+# The box script takes the FBInk path as its first argument; the client only
+# passes the message, so give it a two-line wrapper.
+if [ "$SHOW" = "$RUN/fbink" ] && cp "$APP/msgbox.sh" "$RUN/msgbox.sh" 2>/dev/null &&
+   sh "$RUN/msgbox.sh" "$RUN/fbink" --check 2>/dev/null; then
+    printf '#!/bin/sh\nexec sh %s/msgbox.sh %s/fbink "$1"\n' "$RUN" "$RUN" > "$RUN/box.sh"
+    SHOW="$RUN/box.sh"
+fi
 show() {
     log "STATUS $1"
     case "$SHOW" in
+        *.sh) sh "$SHOW" "$1" >/dev/null 2>&1 ;;
         *eips) eips 1 36 "$(printf '%-44.44s' "$1")" >/dev/null 2>&1
                eips 1 37 "$(printf '%-44s' '')" >/dev/null 2>&1
                eips 1 38 "$(printf '%-44s' '')" >/dev/null 2>&1 ;;

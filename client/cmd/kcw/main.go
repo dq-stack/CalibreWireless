@@ -51,7 +51,7 @@ func main() {
 	readDateCol := flag.String("read-date-col", "", "calibre Date column for last read, e.g. #last_read")
 	idle := flag.Duration("idle", 30*time.Minute, "disconnect after this long without transfers")
 	logFile := flag.String("log", "", "append log to this file (default stderr)")
-	statusCmd := flag.String("status", "", "program that shows status messages on screen (fbink or eips)")
+	statusCmd := flag.String("status", "", "program that shows status messages on screen (fbink, eips or a .sh script)")
 	flag.Float64Var(&o.readPercent, "read-percent", 0, "also count a book as read at this progress % (0 = only the Kindle's Mark as Read)")
 	flag.BoolVar(&o.apnx, "apnx", true, "write page numbers (APNX, calibre's fast method) for MOBI/AZW3 books")
 	flag.Parse()
@@ -354,13 +354,21 @@ func newReadState(o options, c *kindle.Catalog, cfg session.Config) func(string,
 	}
 }
 
-// screen is the status display program: an FBInk binary, eips, or "".
+// screen is the status display program: an FBInk binary, eips, a script
+// that takes the message as its argument, or "".
 var screen string
 
-// status logs a message and draws it near the bottom of the screen.
+// status logs a message and shows it on screen.
 func status(msg string) {
 	log.Printf("STATUS %s", msg)
 	if screen == "" {
+		return
+	}
+	if strings.HasSuffix(screen, ".sh") {
+		// A script that draws the message itself (the runner's message box).
+		if err := exec.Command("sh", screen, msg).Run(); err != nil {
+			log.Printf("status display: %v", err)
+		}
 		return
 	}
 	if strings.HasSuffix(screen, "eips") {

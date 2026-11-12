@@ -35,4 +35,5 @@ IDLE="30m"
 
 # On-screen messages use FBInk if one is installed (e.g. by CoverSleep or
 # KUAL), otherwise the Kindle's built-in eips. Set to "eips" to force eips.
+# On firmware 5.16.3+ FBInk messages appear in a box in the middle of the screen.
 STATUS_WITH=""

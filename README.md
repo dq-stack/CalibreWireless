@@ -39,7 +39,8 @@ Upgrading: unzip the new release over the old one. Your settings (`config.sh`) a
    Tip: tick *Automatically allow connections at startup* in that dialog so you don't have to
    do this every time calibre starts.
 2. On the Kindle: tap **Calibre Wireless**. It turns on Wi-Fi if needed, finds calibre and
-   connects. Messages appear at the bottom of the screen.
+   connects. Messages appear in a box in the middle of the screen on firmware
+   5.16.3 and later, and at the bottom of the screen on older firmware.
 3. Use calibre as with any device: send books, delete books from the Device view.
 4. **Tap Calibre Wireless again to disconnect.** It also stops on its own when you eject it in
    calibre, after 30 minutes without transfers, or when you plug in USB.
