@@ -20,8 +20,8 @@ It also does things other wireless clients don't:
 - A **jailbroken** Kindle that can run **Scriptlets** (shell scripts started from the
   library, e.g. hackerdude's shell_integration).
 - **calibre** on a computer on the **same Wi-Fi network** as the Kindle.
-- Tested on a **Kindle Paperwhite 2 (6th gen), firmware 5.12.2.2**. Other models on firmware
-  5.x should work but haven't been tested yet. Reports welcome!
+- Tested on a **Kindle Paperwhite 2 (6th gen), firmware 5.12.2.2** and a **Kindle 11th gen (2022),
+  firmware 5.18.1**. Other models on firmware 5.x should work but haven't been tested yet. Reports welcome!
 
 ## Install
 
